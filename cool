@@ -2615,27 +2615,234 @@ end
 -- Create hub window and tabs
 -- ============================================================
 local Window = ObsidianLib:CreateWindow({
-    Title = 'Hub',          -- Changed to "Hub"
-    Prefix = 'Obsidian ',   -- Changed to "Obsidian " (with space)
+    Title = 'Hub',
+    Prefix = 'Obsidian ',
     Theme = 'Obsidian'
 })
 
--- WR/DB tab (empty)
+local VirtualInputManager = game:GetService('VirtualInputManager')
+local player = LocalPlayer
+
+-- ============================================================
+-- WR/DB TAB — YOUR Magnets + ESP + Jump Power + Auto Tuck
+-- ============================================================
 local WRDBTab = Window:CreateTab({
     Name = 'WR/DB',
     Icon = 'rbxassetid://111953289912698'
 })
--- Intentionally empty
 
--- OL/DL tab with DL Hitbox controls
+local magnetsEnabled = false
+local espEnabled = false
+local magEspSize = 10
+local jumpPower = 50
+local autoTuckEnabled = false
+
+WRDBTab:CreateToggle({
+    Name = 'Magnets',
+    Default = false,
+    Callback = function(v) magnetsEnabled = v end
+})
+
+WRDBTab:CreateToggle({
+    Name = 'ESP',
+    Default = false,
+    Callback = function(v)
+        espEnabled = v
+        if not v then
+            for _, obj in pairs(workspace:GetDescendants()) do
+                if obj.Name == 'ForceFieldESP' then obj:Destroy() end
+            end
+        end
+    end
+})
+
+WRDBTab:CreateSlider({
+    Name = 'Mag & ESP Range',
+    Min = 5,
+    Max = 18,
+    Default = 10,
+    Increment = 0.5,
+    Suffix = ' studs',
+    Callback = function(v) magEspSize = v end
+})
+
+WRDBTab:CreateSlider({
+    Name = 'Jump Power',
+    Min = 50,
+    Max = 70,
+    Default = 50,
+    Increment = 1,
+    Callback = function(v)
+        jumpPower = v
+        local char = player.Character
+        if char then
+            local hum = char:FindFirstChildOfClass('Humanoid')
+            if hum then
+                hum.UseJumpPower = true
+                hum.JumpPower = v
+            end
+        end
+    end
+})
+
+WRDBTab:CreateToggle({
+    Name = 'Auto Tuck',
+    Default = false,
+    Callback = function(v) autoTuckEnabled = v end
+})
+
+-- ====================== JUMP POWER ======================
+task.spawn(function()
+    while true do
+        task.wait(0.4)
+        local char = player.Character
+        if char then
+            local hum = char:FindFirstChildOfClass('Humanoid')
+            if hum then
+                hum.UseJumpPower = true
+                hum.JumpPower = jumpPower
+            end
+        end
+    end
+end)
+
+-- ====================== ESP ======================
+local function createESP(handle)
+    if handle:FindFirstChild('ForceFieldESP') then return end
+    local part = Instance.new('Part')
+    part.Name = 'ForceFieldESP'
+    part.Color = Color3.fromRGB(40, 140, 255)
+    part.Shape = Enum.PartType.Ball
+    part.Material = Enum.Material.ForceField
+    part.CastShadow = false
+    part.Anchored = true
+    part.CanCollide = false
+    part.Size = Vector3.new(magEspSize * 2, magEspSize * 2, magEspSize * 2)
+    part.CFrame = handle.CFrame
+    part.Parent = handle
+end
+
+RunService.RenderStepped:Connect(function()
+    if not espEnabled then return end
+    for _, handle in pairs(workspace:GetChildren()) do
+        if handle.Name == 'Handle' and handle:IsA('BasePart') then
+            createESP(handle)
+            local ff = handle:FindFirstChild('ForceFieldESP')
+            if ff then
+                ff.CFrame = handle.CFrame
+                ff.Size = Vector3.new(magEspSize * 2, magEspSize * 2, magEspSize * 2)
+            end
+        end
+    end
+end)
+
+-- ====================== MAGNETS (your exact version) ======================
+local function doMag()
+    if not magnetsEnabled then return end
+    local char = player.Character
+    if not char then return end
+    local root = char:FindFirstChild('HumanoidRootPart')
+    if not root then return end
+
+    local closest, closestDist = nil, magEspSize
+    for _, handle in pairs(workspace:GetChildren()) do
+        if handle.Name == 'Handle' and handle:IsA('BasePart') then
+            local dist = (handle.Position - root.Position).Magnitude
+            if dist <= closestDist then
+                closest = handle
+                closestDist = dist
+            end
+        end
+    end
+    if not closest then return end
+
+    pcall(function()
+        firetouchinterest(root, closest, 0)
+        task.wait()
+        firetouchinterest(root, closest, 1)
+    end)
+end
+
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.KeyCode == Enum.KeyCode.ButtonR2 then
+        doMag()
+    end
+end)
+UserInputService.TouchTap:Connect(doMag)
+
+-- ====================== AUTO TUCK (your exact version) ======================
+local tuckedThisBall = false
+
+local function pressE()
+    pcall(function()
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+    end)
+    pcall(function()
+        keypress(0x45)
+    end)
+    task.wait(0.05)
+    pcall(function()
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+    end)
+    pcall(function()
+        keyrelease(0x45)
+    end)
+end
+
+local function hasFootball()
+    local backpack = player:FindFirstChild('Backpack')
+    if backpack then
+        for _, item in ipairs(backpack:GetChildren()) do
+            if item:IsA('Tool') then
+                local n = item.Name:lower()
+                if n == 'football' or n:find('ball') or n == 'handle' then
+                    return true
+                end
+            end
+        end
+    end
+    local char = player.Character
+    if char then
+        for _, item in ipairs(char:GetChildren()) do
+            if item:IsA('Tool') then
+                local n = item.Name:lower()
+                if n == 'football' or n:find('ball') or n == 'handle' then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+task.spawn(function()
+    while true do
+        task.wait(0.05)
+        if not autoTuckEnabled then
+            tuckedThisBall = false
+            continue
+        end
+        if hasFootball() then
+            if not tuckedThisBall then
+                tuckedThisBall = true
+                pressE()
+                print('[Auto Tuck] Tucked')
+            end
+        else
+            tuckedThisBall = false
+        end
+    end
+end)
+
+-- ============================================================
+-- OL/DL TAB (Hitbox - unchanged)
+-- ============================================================
 local OLDLTab = Window:CreateTab({
     Name = 'OL/DL',
     Icon = 'rbxassetid://111953289912698'
 })
 
--- ============================================================
--- DL Hitbox Controls (Toggle + Slider)
--- ============================================================
 local hbToggle = OLDLTab:CreateToggle({
     Name = 'HB',
     Default = true,
@@ -2652,25 +2859,16 @@ local rangeSlider = OLDLTab:CreateSlider({
     Tip = 'Controls tackle range (10-60 studs)'
 })
 
--- ============================================================
--- Imported Hitbox Script Logic (fully connected to the UI controls)
--- ============================================================
 local hitboxEnabled = true
-local espEnabled = false  -- ESP not controlled by UI; keep false if you want it off
 local tackleRange = 30
-
-local Players = game:GetService('Players')
-local LocalPlayer = Players.LocalPlayer
-local PURPLE = Color3.fromRGB(170, 0, 255)
-
 local currentTarget = nil
 local touchPart = nil
 
 local function isFootballPart(part)
-    if part.Name:lower() == "football" then return true end
+    if part.Name:lower() == 'football' then return true end
     local parent = part.Parent
     while parent do
-        if parent.Name:lower() == "football" then return true end
+        if parent.Name:lower() == 'football' then return true end
         parent = parent.Parent
     end
     return false
@@ -2680,14 +2878,14 @@ local function getBallCarrier()
     for _, p in Players:GetPlayers() do
         if p ~= LocalPlayer and p.Character then
             local char = p.Character
-            if char:FindFirstChild("Football") then return p end
+            if char:FindFirstChild('Football') then return p end
             for _, t in char:GetChildren() do
-                if t:IsA("Tool") and (t.Name:lower():find("ball") or t.Name:lower():find("foot")) then
+                if t:IsA('Tool') and (t.Name:lower():find('ball') or t.Name:lower():find('foot')) then
                     return p
                 end
             end
             for _, obj in char:GetDescendants() do
-                if obj.Name == "Football" or (obj:IsA("BasePart") and obj.Name:lower():find("ball")) then
+                if obj.Name == 'Football' or (obj:IsA('BasePart') and obj.Name:lower():find('ball')) then
                     return p
                 end
             end
@@ -2697,41 +2895,34 @@ local function getBallCarrier()
 end
 
 local function applyHitbox(char)
-    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+    if not char or not char:FindFirstChild('HumanoidRootPart') then return end
     local hrp = char.HumanoidRootPart
     local hitSize = Vector3.new(tackleRange * 0.5, tackleRange * 0.7, tackleRange * 0.5)
 
     for _, part in char:GetDescendants() do
-        if part:IsA("BasePart") and part ~= hrp then
+        if part:IsA('BasePart') and part ~= hrp then
             if isFootballPart(part) then continue end
-
-            if not part:GetAttribute("OS") then
-                part:SetAttribute("OS", part.Size)
-                part:SetAttribute("OC", part.Color)
-                part:SetAttribute("OT", part.Transparency)
-                part:SetAttribute("OM", part.Material)
-                part:SetAttribute("Col", part.CanCollide)
-                part:SetAttribute("Mas", part.Massless)
+            if not part:GetAttribute('OS') then
+                part:SetAttribute('OS', part.Size)
+                part:SetAttribute('OC', part.Color)
+                part:SetAttribute('OT', part.Transparency)
+                part:SetAttribute('OM', part.Material)
+                part:SetAttribute('Col', part.CanCollide)
+                part:SetAttribute('Mas', part.Massless)
             end
             part.Size = hitSize
             part.CanCollide = false
             part.Massless = true
-            if espEnabled then
-                part.Color = PURPLE
-                part.Transparency = 0.55
-                part.Material = Enum.Material.ForceField
-            else
-                part.Transparency = 0.85
-            end
+            part.Transparency = 0.85
         end
     end
 
-    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild('HumanoidRootPart') then
         local myRoot = LocalPlayer.Character.HumanoidRootPart
         if (myRoot.Position - hrp.Position).Magnitude <= tackleRange + 6 then
             if not touchPart then
-                touchPart = Instance.new("Part")
-                touchPart.Size = Vector3.new(10,10,10)
+                touchPart = Instance.new('Part')
+                touchPart.Size = Vector3.new(10, 10, 10)
                 touchPart.Transparency = 1
                 touchPart.CanCollide = false
                 touchPart.Anchored = true
@@ -2748,26 +2939,24 @@ end
 local function clearCarrier()
     if currentTarget and currentTarget.Character then
         for _, part in currentTarget.Character:GetDescendants() do
-            if part:IsA("BasePart") then
-                part.Size = part:GetAttribute("OS") or part.Size
-                part.Color = part:GetAttribute("OC") or part.Color
-                part.Transparency = part:GetAttribute("OT") or 0
-                part.Material = part:GetAttribute("OM") or Enum.Material.Plastic
-                part.CanCollide = part:GetAttribute("Col") ~= nil and part:GetAttribute("Col") or true
-                part.Massless = part:GetAttribute("Mas") ~= nil and part:GetAttribute("Mas") or false
+            if part:IsA('BasePart') then
+                part.Size = part:GetAttribute('OS') or part.Size
+                part.Color = part:GetAttribute('OC') or part.Color
+                part.Transparency = part:GetAttribute('OT') or 0
+                part.Material = part:GetAttribute('OM') or Enum.Material.Plastic
+                part.CanCollide = part:GetAttribute('Col') ~= nil and part:GetAttribute('Col') or true
+                part.Massless = part:GetAttribute('Mas') ~= nil and part:GetAttribute('Mas') or false
             end
         end
     end
-    if touchPart then touchPart:Destroy(); touchPart = nil end
+    if touchPart then touchPart:Destroy() touchPart = nil end
     currentTarget = nil
 end
 
 Players.PlayerRemoving:Connect(clearCarrier)
 LocalPlayer.CharacterRemoving:Connect(clearCarrier)
 
--- Main heartbeat loop reads flags every frame
 RunService.Heartbeat:Connect(function()
-    -- Read current values from flags (real-time)
     hitboxEnabled = hbToggle and hbToggle.Value or false
     tackleRange = rangeSlider and rangeSlider.Value or 30
 
@@ -2785,10 +2974,9 @@ RunService.Heartbeat:Connect(function()
         clearCarrier()
         currentTarget = carrier
     end
-
     if carrier and carrier.Character then
         applyHitbox(carrier.Character)
     end
 end)
 
-print("DL Hitbox loaded successfully.")
+print('Obsidian Hub loaded')
