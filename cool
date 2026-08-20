@@ -2732,15 +2732,17 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- ====================== MAGNETS (your exact version) ======================
+-- ====================== MAGNETS ======================
 local function doMag()
     if not magnetsEnabled then return end
+
     local char = player.Character
     if not char then return end
     local root = char:FindFirstChild('HumanoidRootPart')
     if not root then return end
 
     local closest, closestDist = nil, magEspSize
+
     for _, handle in pairs(workspace:GetChildren()) do
         if handle.Name == 'Handle' and handle:IsA('BasePart') then
             local dist = (handle.Position - root.Position).Magnitude
@@ -2750,7 +2752,13 @@ local function doMag()
             end
         end
     end
-    if not closest then return end
+
+    if not closest then
+        print('[Mags] No Handle in range')
+        return
+    end
+
+    print('[Mags] Touching Handle @', string.format('%.1f', closestDist), 'studs')
 
     pcall(function()
         firetouchinterest(root, closest, 0)
@@ -2759,12 +2767,14 @@ local function doMag()
     end)
 end
 
+-- Make sure these are connected (only once)
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.KeyCode == Enum.KeyCode.ButtonR2 then
         doMag()
     end
 end)
+
 UserInputService.TouchTap:Connect(doMag)
 
 -- ====================== AUTO TUCK (your exact version) ======================
