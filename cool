@@ -1,7 +1,3 @@
--- // Obsidian Hub (merged with Hitbox)
--- // WR/DB empty, OL/DL contains DL Hitbox switch + radius
-
-
 local UserInputService = game:GetService('UserInputService')
 local TweenService = game:GetService('TweenService')
 local RunService = game:GetService('RunService')
@@ -2836,12 +2832,21 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- OL/DL TAB (Hitbox - unchanged)
+-- OL/DL TAB
 -- ============================================================
 local OLDLTab = Window:CreateTab({
     Name = 'OL/DL',
     Icon = 'rbxassetid://111953289912698'
 })
+
+local VirtualInputManager = game:GetService('VirtualInputManager')
+local ReplicatedStorage = game:GetService('ReplicatedStorage')
+local Stats = game:GetService('Stats')
+local player = LocalPlayer
+
+-- ====================== HITBOX ======================
+local hitboxEnabled = true
+local tackleRange = 30
 
 local hbToggle = OLDLTab:CreateToggle({
     Name = 'HB',
@@ -2856,11 +2861,53 @@ local rangeSlider = OLDLTab:CreateSlider({
     Default = 30,
     Increment = 1,
     Suffix = ' studs',
-    Tip = 'Controls tackle range (10-60 studs)'
+    Tip = 'Controls tackle range'
 })
 
-local hitboxEnabled = true
-local tackleRange = 30
+OLDLTab:CreateDivider()
+
+-- ====================== AUTO RUSH ======================
+local autoRushEnabled = false
+local walkToLineEnabled = false
+local autoRushReactionTime = 0.15
+
+OLDLTab:CreateToggle({
+    Name = 'Auto Rush',
+    Default = false,
+    Tip = 'Moves toward opposing ball carrier',
+    Callback = function(v) autoRushEnabled = v end
+})
+
+OLDLTab:CreateToggle({
+    Name = 'Walk To Line',
+    Default = false,
+    Tip = 'Moves to line before play starts',
+    Callback = function(v) walkToLineEnabled = v end
+})
+
+OLDLTab:CreateSlider({
+    Name = 'Reaction Time',
+    Min = 0,
+    Max = 1,
+    Default = 0.15,
+    Increment = 0.01,
+    Callback = function(v) autoRushReactionTime = v end
+})
+
+OLDLTab:CreateDivider()
+
+-- ====================== AUTO BLOCK ======================
+local autoBlockEnabled = false
+local sendingBlock = false
+
+OLDLTab:CreateToggle({
+    Name = 'Auto Block',
+    Default = false,
+    Tip = 'Spams X every 0.01s — press X to shut off',
+    Callback = function(v) autoBlockEnabled = v end
+})
+
+-- ====================== HITBOX LOGIC ======================
 local currentTarget = nil
 local touchPart = nil
 
@@ -2979,4 +3026,119 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
-print('Obsidian Hub loaded')
+-- ====================== AUTO RUSH LOGIC ======================
+local function enemyHasFootball(char)
+    if not char then return false end
+    for _, item in ipairs(char:GetChildren()) do
+        if item:IsA('Tool') then
+            local n = item.Name:lower()
+            if n == 'football' or n:find('ball') or n == 'handle' then
+                return true, item:FindFirstChild('Handle') or item:FindFirstChildWhichIsA('BasePart')
+            end
+        end
+    end
+    local fb = char:FindFirstChild('Football')
+    if fb then
+        return true, fb:FindFirstChildWhichIsA('BasePart') or fb:FindFirstChild('Handle')
+    end
+    return false
+end
+
+task.spawn(function()
+    while true do
+        task.wait()
+        if not autoRushEnabled then continue end
+
+        local character = player.Character
+        if not character then continue end
+        local humanoid = character:FindFirstChildOfClass('Humanoid')
+        if not humanoid then continue end
+        local hrp = character:FindFirstChild('HumanoidRootPart')
+        if not hrp then continue end
+
+        if walkToLineEnabled then
+            local flags = ReplicatedStorage:FindFirstChild('Flags')
+            if flags
+                and flags:FindFirstChild('PossessionTag')
+                and flags:FindFirstChild('Status')
+                and player.Team
+                and flags.PossessionTag.Value ~= player.Team.Name
+                and flags.Status.Value == 'PrePlay' then
+                local line = workspace:FindFirstChild('LineDown')
+                if line then
+                    humanoid:MoveTo(line.Position)
+                end
+            end
+        end
+
+        for _, v in ipairs(Players:GetPlayers()) do
+            if v == player then continue end
+            if player.Team and v.Team and v.Team == player.Team then continue end
+            if not v.Character then continue end
+
+            local enemyChar = v.Character
+            local enemyHumanoid = enemyChar:FindFirstChildOfClass('Humanoid')
+            local enemyHrp = enemyChar:FindFirstChild('HumanoidRootPart')
+            if not enemyHumanoid or not enemyHrp then continue end
+            if enemyHumanoid.WalkSpeed <= 0 then continue end
+            if enemyHumanoid.PlatformStand then continue end
+
+            local hasBall, footballPart = enemyHasFootball(enemyChar)
+            if not hasBall or not footballPart then continue end
+
+            local ping = 0
+            pcall(function()
+                local item = Stats.Network.ServerStatsItem['Data Ping']
+                if item then ping = item:GetValue() / 1000 end
+            end)
+
+            local speed = enemyHumanoid.MoveDirection.Magnitude > 0 and enemyHumanoid.WalkSpeed or 0
+            local predictionTime = ping + autoRushReactionTime
+            local pos = footballPart.Position + (enemyHumanoid.MoveDirection * speed * predictionTime * 20)
+            local direction = pos - enemyHrp.Position
+            if direction.Magnitude > 0 then
+                pos = pos + direction.Unit * ((hrp.Position - pos).Magnitude / 20)
+            end
+            humanoid:MoveTo(pos)
+        end
+    end
+end)
+
+-- ====================== AUTO BLOCK LOGIC ======================
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.KeyCode == Enum.KeyCode.X and autoBlockEnabled and not sendingBlock then
+        autoBlockEnabled = false
+        print('[Auto Block] Shut off')
+    end
+end)
+
+task.spawn(function()
+    while true do
+        if not autoBlockEnabled then
+            task.wait(0.05)
+            continue
+        end
+
+        sendingBlock = true
+
+        pcall(function()
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.X, false, game)
+        end)
+        pcall(function()
+            keypress(0x58)
+        end)
+
+        task.wait(0.01)
+
+        pcall(function()
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.X, false, game)
+        end)
+        pcall(function()
+            keyrelease(0x58)
+        end)
+
+        sendingBlock = false
+        task.wait(0.01)
+    end
+end)
