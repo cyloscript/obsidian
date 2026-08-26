@@ -2855,12 +2855,12 @@ local Stats = game:GetService('Stats')
 local player = LocalPlayer
 
 -- ====================== HITBOX ======================
-local hitboxEnabled = true
+local hitboxEnabled = false
 local tackleRange = 30
 
 local hbToggle = OLDLTab:CreateToggle({
     Name = 'HB',
-    Default = true,
+    Default = false,
     Tip = 'Hitbox: ON / OFF'
 })
 
@@ -2915,6 +2915,84 @@ OLDLTab:CreateToggle({
     Default = false,
     Tip = 'Spams X every 0.01s — press X to shut off',
     Callback = function(v) autoBlockEnabled = v end
+})
+
+
+
+OLDLTab:CreateDivider()
+
+-- ====================== ENHANCED BLOCKING ======================
+local advancedBlockingEnabled = false
+local enhancedBlockSize = 10
+local DEFAULT_JERSEY_SIZE = Vector3.new(2.31, 5.4, 2.3)
+local originalJerseySizes = {}
+local enhancedOverlays = {}
+
+local function destroyOverlay(plr)
+    local ov = enhancedOverlays[plr]
+    if ov then
+        pcall(function() ov:Destroy() end)
+        enhancedOverlays[plr] = nil
+    end
+end
+
+local function clearAllOverlays()
+    for plr, ov in pairs(enhancedOverlays) do
+        pcall(function()
+            if ov then ov:Destroy() end
+        end)
+    end
+    table.clear(enhancedOverlays)
+end
+
+local function restoreJerseys()
+    for jersey, data in pairs(originalJerseySizes) do
+        pcall(function()
+            if jersey and jersey.Parent then
+                if type(data) == 'table' then
+                    jersey.Size = data.Size or DEFAULT_JERSEY_SIZE
+                    if data.CanCollide ~= nil then jersey.CanCollide = data.CanCollide end
+                    if data.Massless ~= nil then jersey.Massless = data.Massless end
+                else
+                    jersey.Size = data or DEFAULT_JERSEY_SIZE
+                end
+            end
+        end)
+    end
+    table.clear(originalJerseySizes)
+end
+
+OLDLTab:CreateToggle({
+    Name = 'Advanced Blocking',
+    Default = false,
+    Tip = 'Block enhancer on other players (skips ball carriers)',
+    Callback = function(v)
+        advancedBlockingEnabled = v
+        if not v then
+            clearAllOverlays()
+            restoreJerseys()
+        end
+    end
+})
+
+OLDLTab:CreateSlider({
+    Name = 'Enhanced Block Size',
+    Min = 5,
+    Max = 25,
+    Default = 10,
+    Increment = 0.5,
+    Suffix = ' studs',
+    Tip = 'Size of the block hitbox',
+    Callback = function(v)
+        enhancedBlockSize = v
+        for _, ov in pairs(enhancedOverlays) do
+            if ov and ov.Parent then
+                pcall(function()
+                    ov.Size = Vector3.new(v, v, v)
+                end)
+            end
+        end
+    end
 })
 
 -- ====================== HITBOX LOGIC ======================
@@ -3150,5 +3228,204 @@ task.spawn(function()
 
         sendingBlock = false
         task.wait(0.01)
+    end
+end)
+
+
+
+-- ====================== ENHANCED BLOCKING LOGIC ======================
+-- Jersey size = block (works from outside).
+-- While YOU are inside their hitbox, pulse size slightly so block
+-- keeps re-triggering — no solid local parts, no firetouchinterest (no TP).
+-- Team check + skip Football.
+
+local StatsService = game:GetService('Stats')
+local pulsePhase = 0
+
+local function playerHasFootball(plr)
+    local char = plr.Character
+    if not char then return false end
+    if char:FindFirstChild('Football') then return true end
+    for _, item in ipairs(char:GetChildren()) do
+        if item:IsA('Tool') then
+            local n = item.Name:lower()
+            if n == 'football' or n:find('ball') or n == 'handle' then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function isEnemy(plr)
+    if plr == LocalPlayer then return false end
+    local myTeam = LocalPlayer.Team
+    local theirTeam = plr.Team
+    if myTeam and theirTeam and myTeam == theirTeam then
+        return false
+    end
+    return true
+end
+
+local function getPingSeconds()
+    local ping = 0.08
+    pcall(function()
+        local item = StatsService.Network.ServerStatsItem['Data Ping']
+        if item then
+            ping = math.clamp(item:GetValue() / 1000, 0.02, 0.35)
+        end
+    end)
+    return ping
+end
+
+local function predictCFrame(hrp, humanoid, ping)
+    local pos = hrp.Position
+    local vel = hrp.AssemblyLinearVelocity
+    if vel.Magnitude < 1 and humanoid then
+        local speed = humanoid.WalkSpeed or 16
+        if humanoid.MoveDirection.Magnitude > 0.05 then
+            vel = humanoid.MoveDirection * speed
+        end
+    end
+    local predicted = pos + vel * (ping * 1.15 + 0.03)
+    return CFrame.new(predicted) * (hrp.CFrame - hrp.CFrame.Position)
+end
+
+local function getOrCreateOverlay(plr)
+    local ov = enhancedOverlays[plr]
+    if ov and ov.Parent then return ov end
+
+    local char = plr.Character
+    local hrp = char and char:FindFirstChild('HumanoidRootPart')
+    if not hrp then return nil end
+
+    local s = enhancedBlockSize
+    ov = Instance.new('Part')
+    ov.Name = 'EnhancedBlockOverlay'
+    ov.Size = Vector3.new(s, s, s)
+    ov.Transparency = 0.55
+    ov.Color = Color3.fromRGB(40, 160, 255)
+    ov.Material = Enum.Material.ForceField
+    ov.CanCollide = false
+    ov.Massless = true
+    ov.Anchored = true
+    ov.CastShadow = false
+    ov.CanTouch = false
+    ov.Parent = workspace
+
+    enhancedOverlays[plr] = ov
+    return ov
+end
+
+local function expandJersey(char, inside)
+    local jersey = char:FindFirstChild('Jersey') or char:FindFirstChild('Hitbox')
+    if not jersey or not jersey:IsA('BasePart') then return end
+
+    if not originalJerseySizes[jersey] then
+        originalJerseySizes[jersey] = {
+            Size = jersey.Size,
+            CanCollide = jersey.CanCollide,
+            Massless = jersey.Massless,
+        }
+    end
+
+    local s = enhancedBlockSize
+    -- While inside, pulse size so block keeps registering (edge re-contact)
+    if inside then
+        if pulsePhase == 0 then
+            s = s * 0.92
+        end
+    end
+
+    pcall(function()
+        jersey.Size = Vector3.new(s, s, s)
+    end)
+end
+
+local function applyEnhancedBlocking()
+    if not advancedBlockingEnabled then return end
+
+    pulsePhase = (pulsePhase + 1) % 4 -- pulse every few frames while inside
+
+    local s = enhancedBlockSize
+    local targetSize = Vector3.new(s, s, s)
+    local ping = getPingSeconds()
+    local alive = {}
+
+    local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild('HumanoidRootPart')
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if not isEnemy(plr) then
+            destroyOverlay(plr)
+        elseif playerHasFootball(plr) then
+            destroyOverlay(plr)
+            local char = plr.Character
+            if char then
+                local jersey = char:FindFirstChild('Jersey') or char:FindFirstChild('Hitbox')
+                if jersey and originalJerseySizes[jersey] then
+                    local data = originalJerseySizes[jersey]
+                    pcall(function()
+                        jersey.Size = (type(data) == 'table' and data.Size) or DEFAULT_JERSEY_SIZE
+                    end)
+                    originalJerseySizes[jersey] = nil
+                end
+            end
+        else
+            local char = plr.Character
+            local hrp = char and char:FindFirstChild('HumanoidRootPart')
+            local humanoid = char and char:FindFirstChildOfClass('Humanoid')
+            if char and hrp and humanoid and humanoid.Health > 0 then
+                alive[plr] = true
+
+                local inside = false
+                if myRoot then
+                    local dist = (myRoot.Position - hrp.Position).Magnitude
+                    inside = dist < (enhancedBlockSize * 0.55)
+                end
+
+                local ov = getOrCreateOverlay(plr)
+                if ov then
+                    pcall(function()
+                        ov.Size = targetSize
+                        ov.CanCollide = false
+                        ov.CFrame = predictCFrame(hrp, humanoid, ping)
+                    end)
+                end
+
+                expandJersey(char, inside)
+            else
+                destroyOverlay(plr)
+            end
+        end
+    end
+
+    for plr, _ in pairs(enhancedOverlays) do
+        if not alive[plr] then
+            destroyOverlay(plr)
+        end
+    end
+end
+
+local function hookPlayer(plr)
+    if plr == LocalPlayer then return end
+    plr.CharacterAdded:Connect(function()
+        destroyOverlay(plr)
+    end)
+    plr.CharacterRemoving:Connect(function()
+        destroyOverlay(plr)
+    end)
+end
+
+Players.PlayerAdded:Connect(hookPlayer)
+Players.PlayerRemoving:Connect(function(plr)
+    destroyOverlay(plr)
+end)
+for _, plr in ipairs(Players:GetPlayers()) do
+    hookPlayer(plr)
+end
+
+RunService.RenderStepped:Connect(function()
+    if advancedBlockingEnabled then
+        applyEnhancedBlocking()
     end
 end)
