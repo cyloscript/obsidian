@@ -2998,12 +2998,14 @@ OLDLTab:CreateSlider({
 -- ====================== HITBOX LOGIC ======================
 local currentTarget = nil
 local touchPart = nil
+local modifiedParts = {}          -- track every part we ever touched
 
 local function isFootballPart(part)
-    if part.Name:lower() == 'football' then return true end
+    if not part then return false end
+    if part.Name:lower():find("football") or part.Name:lower():find("ball") then return true end
     local parent = part.Parent
-    while parent do
-        if parent.Name:lower() == 'football' then return true end
+    while parent and parent ~= workspace do
+        if parent.Name:lower():find("football") or parent.Name:lower():find("ball") then return true end
         parent = parent.Parent
     end
     return false
@@ -3013,14 +3015,14 @@ local function getBallCarrier()
     for _, p in Players:GetPlayers() do
         if p ~= LocalPlayer and p.Character then
             local char = p.Character
-            if char:FindFirstChild('Football') then return p end
+            if char:FindFirstChild("Football") then return p end
             for _, t in char:GetChildren() do
-                if t:IsA('Tool') and (t.Name:lower():find('ball') or t.Name:lower():find('foot')) then
+                if t:IsA("Tool") and (t.Name:lower():find("ball") or t.Name:lower():find("foot")) then
                     return p
                 end
             end
             for _, obj in char:GetDescendants() do
-                if obj.Name == 'Football' or (obj:IsA('BasePart') and obj.Name:lower():find('ball')) then
+                if obj.Name == "Football" or (obj:IsA("BasePart") and obj.Name:lower():find("ball")) then
                     return p
                 end
             end
@@ -3029,87 +3031,113 @@ local function getBallCarrier()
     return nil
 end
 
+local function storeOriginal(part)
+    if modifiedParts[part] then return end
+    modifiedParts[part] = {
+        Size        = part.Size,
+        Color       = part.Color,
+        Transparency= part.Transparency,
+        Material    = part.Material,
+        CanCollide  = part.CanCollide,
+        Massless    = part.Massless,
+    }
+end
+
+local function restorePart(part)
+    local data = modifiedParts[part]
+    if not data or not part or not part.Parent then return end
+    pcall(function()
+        part.Size         = data.Size
+        part.Color        = data.Color
+        part.Transparency = data.Transparency
+        part.Material     = data.Material
+        part.CanCollide   = data.CanCollide
+        part.Massless     = data.Massless
+    end)
+    modifiedParts[part] = nil
+end
+
+local function restoreAll()
+    for part, _ in pairs(modifiedParts) do
+        restorePart(part)
+    end
+    table.clear(modifiedParts)
+    if touchPart then
+        touchPart:Destroy()
+        touchPart = nil
+    end
+    currentTarget = nil
+end
+
 local function applyHitbox(char)
-    if not char or not char:FindFirstChild('HumanoidRootPart') then return end
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
     local hrp = char.HumanoidRootPart
-    local hitSize = Vector3.new(tackleRange * 0.5, tackleRange * 0.7, tackleRange * 0.5)
+    local hitSize = Vector3.new(tackleRange * 0.45, tackleRange * 0.65, tackleRange * 0.45)
 
     for _, part in char:GetDescendants() do
-        if part:IsA('BasePart') and part ~= hrp then
-            if isFootballPart(part) then continue end
-            if not part:GetAttribute('OS') then
-                part:SetAttribute('OS', part.Size)
-                part:SetAttribute('OC', part.Color)
-                part:SetAttribute('OT', part.Transparency)
-                part:SetAttribute('OM', part.Material)
-                part:SetAttribute('Col', part.CanCollide)
-                part:SetAttribute('Mas', part.Massless)
-            end
-            part.Size = hitSize
+        if part:IsA("BasePart") and part ~= hrp and not isFootballPart(part) then
+            storeOriginal(part)
+            part.Size       = hitSize
             part.CanCollide = false
-            part.Massless = true
+            part.Massless   = true
             part.Transparency = 0.85
         end
     end
 
-    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild('HumanoidRootPart') then
-        local myRoot = LocalPlayer.Character.HumanoidRootPart
-        if (myRoot.Position - hrp.Position).Magnitude <= tackleRange + 6 then
+    -- only fire touch when we are actually close enough
+    local myChar = LocalPlayer.Character
+    if myChar and myChar:FindFirstChild("HumanoidRootPart") then
+        local myRoot = myChar.HumanoidRootPart
+        if (myRoot.Position - hrp.Position).Magnitude <= tackleRange + 4 then
             if not touchPart then
-                touchPart = Instance.new('Part')
-                touchPart.Size = Vector3.new(10, 10, 10)
+                touchPart = Instance.new("Part")
+                touchPart.Size         = Vector3.new(8, 8, 8)
                 touchPart.Transparency = 1
-                touchPart.CanCollide = false
-                touchPart.Anchored = true
-                touchPart.Parent = workspace
+                touchPart.CanCollide   = false
+                touchPart.Anchored     = true
+                touchPart.Parent       = workspace
             end
             touchPart.CFrame = hrp.CFrame
-            firetouchinterest(myRoot, touchPart, 0)
-            task.wait()
-            firetouchinterest(myRoot, touchPart, 1)
+            pcall(function()
+                firetouchinterest(myRoot, touchPart, 0)
+                task.wait()
+                firetouchinterest(myRoot, touchPart, 1)
+            end)
         end
     end
 end
 
-local function clearCarrier()
-    if currentTarget and currentTarget.Character then
-        for _, part in currentTarget.Character:GetDescendants() do
-            if part:IsA('BasePart') then
-                part.Size = part:GetAttribute('OS') or part.Size
-                part.Color = part:GetAttribute('OC') or part.Color
-                part.Transparency = part:GetAttribute('OT') or 0
-                part.Material = part:GetAttribute('OM') or Enum.Material.Plastic
-                part.CanCollide = part:GetAttribute('Col') ~= nil and part:GetAttribute('Col') or true
-                part.Massless = part:GetAttribute('Mas') ~= nil and part:GetAttribute('Mas') or false
-            end
-        end
-    end
-    if touchPart then touchPart:Destroy() touchPart = nil end
-    currentTarget = nil
-end
-
-Players.PlayerRemoving:Connect(clearCarrier)
-LocalPlayer.CharacterRemoving:Connect(clearCarrier)
+-- cleanup on leave / death
+Players.PlayerRemoving:Connect(function(p)
+    if p == currentTarget then restoreAll() end
+end)
+LocalPlayer.CharacterRemoving:Connect(restoreAll)
 
 RunService.Heartbeat:Connect(function()
     hitboxEnabled = hbToggle and hbToggle.Value or false
-    tackleRange = rangeSlider and rangeSlider.Value or 30
+    tackleRange   = rangeSlider and rangeSlider.Value or 30
 
     if not hitboxEnabled then
-        if currentTarget then clearCarrier() end
+        if next(modifiedParts) or currentTarget or touchPart then
+            restoreAll()
+        end
         return
     end
 
     local carrier = getBallCarrier()
-    if not carrier and currentTarget then
-        clearCarrier()
+
+    -- carrier disappeared or changed
+    if not carrier then
+        if currentTarget then restoreAll() end
         return
     end
-    if carrier and carrier ~= currentTarget then
-        clearCarrier()
+
+    if carrier ~= currentTarget then
+        restoreAll()                       -- fully clean previous target
         currentTarget = carrier
     end
-    if carrier and carrier.Character then
+
+    if carrier.Character then
         applyHitbox(carrier.Character)
     end
 end)
