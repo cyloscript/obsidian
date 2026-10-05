@@ -2633,6 +2633,7 @@ local magEspSize = 10
 local jumpPower = 50
 local autoTuckEnabled = false
 
+-- Magnets / ESP
 WRDBTab:CreateToggle({
     Name = 'Magnets',
     Default = false,
@@ -2662,6 +2663,9 @@ WRDBTab:CreateSlider({
     Callback = function(v) magEspSize = v end
 })
 
+WRDBTab:CreateDivider()
+
+-- Jump
 WRDBTab:CreateSlider({
     Name = 'Jump Power',
     Min = 50,
@@ -2681,6 +2685,9 @@ WRDBTab:CreateSlider({
     end
 })
 
+WRDBTab:CreateDivider()
+
+-- Auto Tuck
 WRDBTab:CreateToggle({
     Name = 'Auto Tuck',
     Default = false,
@@ -2777,46 +2784,65 @@ end)
 
 UserInputService.TouchTap:Connect(doMag)
 
--- ====================== AUTO TUCK (your exact version) ======================
+-- ====================== AUTO TUCK ======================
+-- Was double-tucking because: Tuck value + FireServer + E all fired together
+-- (E/remote toggle = tuck then untuck), and ChildAdded + poll both triggered.
+-- Fix: ONE action only, poll-only, skip if already tucked.
 local tuckedThisBall = false
 
-local function pressE()
-    pcall(function()
-        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-    end)
-    pcall(function()
-        keypress(0x45)
-    end)
-    task.wait(0.05)
-    pcall(function()
-        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-    end)
-    pcall(function()
-        keyrelease(0x45)
-    end)
+local function isAlreadyTucked(char)
+    local j = char and char:FindFirstChild('Jersey')
+    local vals = j and j:FindFirstChild('Values')
+    local tuck = vals and vals:FindFirstChild('Tuck')
+    return tuck and tuck:IsA('BoolValue') and tuck.Value == true
 end
 
-local function hasFootball()
-    local backpack = player:FindFirstChild('Backpack')
-    if backpack then
-        for _, item in ipairs(backpack:GetChildren()) do
-            if item:IsA('Tool') then
-                local n = item.Name:lower()
-                if n == 'football' or n:find('ball') or n == 'handle' then
-                    return true
-                end
-            end
-        end
-    end
+local function doTuck()
     local char = player.Character
-    if char then
-        for _, item in ipairs(char:GetChildren()) do
-            if item:IsA('Tool') then
-                local n = item.Name:lower()
-                if n == 'football' or n:find('ball') or n == 'handle' then
-                    return true
-                end
-            end
+    if not char then return end
+    if isAlreadyTucked(char) then
+        tuckedThisBall = true
+        return
+    end
+
+    local j = char:FindFirstChild('Jersey')
+    local vals = j and j:FindFirstChild('Values')
+    local tuck = vals and vals:FindFirstChild('Tuck')
+
+    -- Prefer BoolValue only — do NOT also FireServer or press E (those toggle)
+    if tuck and tuck:IsA('BoolValue') then
+        tuck.Value = true
+        tuckedThisBall = true
+        return
+    end
+
+    local ev = j and j:FindFirstChild('Event')
+    if ev and ev:IsA('RemoteEvent') then
+        pcall(function()
+            ev:FireServer({'Tuck'})
+        end)
+        tuckedThisBall = true
+        return
+    end
+
+    -- last resort: single E press
+    pcall(function()
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+        task.wait(0.04)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+    end)
+    tuckedThisBall = true
+end
+
+local function hasFootballEquipped()
+    local char = player.Character
+    if not char then return false end
+    local tool = char:FindFirstChild('Football')
+    if tool and tool:IsA('Tool') then return true end
+    for _, item in ipairs(char:GetChildren()) do
+        if item:IsA('Tool') then
+            local n = item.Name:lower()
+            if n == 'football' or n == 'handle' then return true end
         end
     end
     return false
@@ -2824,16 +2850,14 @@ end
 
 task.spawn(function()
     while true do
-        task.wait(0.05)
+        task.wait(0.1)
         if not autoTuckEnabled then
             tuckedThisBall = false
             continue
         end
-        if hasFootball() then
+        if hasFootballEquipped() then
             if not tuckedThisBall then
-                tuckedThisBall = true
-                pressE()
-                print('[Auto Tuck] Tucked')
+                doTuck()
             end
         else
             tuckedThisBall = false
