@@ -2627,13 +2627,11 @@ local WRDBTab = Window:CreateTab({
     Icon = 'rbxassetid://111953289912698'
 })
 
+-- Magnets / ESP
 local magnetsEnabled = false
 local espEnabled = false
-local magEspSize = 10
-local jumpPower = 50
-local autoTuckEnabled = false
+local magEspSize = 14          -- increased default
 
--- Magnets / ESP
 WRDBTab:CreateToggle({
     Name = 'Magnets',
     Default = false,
@@ -2656,8 +2654,8 @@ WRDBTab:CreateToggle({
 WRDBTab:CreateSlider({
     Name = 'Mag & ESP Range',
     Min = 5,
-    Max = 18,
-    Default = 10,
+    Max = 25,                   -- higher max
+    Default = 14,
     Increment = 0.5,
     Suffix = ' studs',
     Callback = function(v) magEspSize = v end
@@ -2740,6 +2738,7 @@ RunService.RenderStepped:Connect(function()
 end)
 
 -- ====================== MAGNETS ======================
+-- ====================== MAGNETS (more blatant) ======================
 local function doMag()
     if not magnetsEnabled then return end
 
@@ -2760,21 +2759,23 @@ local function doMag()
         end
     end
 
-    if not closest then
-        print('[Mags] No Handle in range')
-        return
-    end
+    if not closest then return end
 
-    print('[Mags] Touching Handle @', string.format('%.1f', closestDist), 'studs')
-
+    -- Slight pull toward player (more blatant)
     pcall(function()
-        firetouchinterest(root, closest, 0)
-        task.wait()
-        firetouchinterest(root, closest, 1)
+        local direction = (root.Position - closest.Position).Unit
+        closest.CFrame = closest.CFrame + direction * math.min(2.5, closestDist * 0.35)
+    end)
+
+    -- Spam touchinterest harder
+    pcall(function()
+        for i = 1, 4 do
+            firetouchinterest(root, closest, 0)
+            firetouchinterest(root, closest, 1)
+        end
     end)
 end
 
--- Make sure these are connected (only once)
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.KeyCode == Enum.KeyCode.ButtonR2 then
@@ -2941,88 +2942,12 @@ OLDLTab:CreateToggle({
     Callback = function(v) autoBlockEnabled = v end
 })
 
-
-
 OLDLTab:CreateDivider()
-
--- ====================== ENHANCED BLOCKING ======================
-local advancedBlockingEnabled = false
-local enhancedBlockSize = 10
-local DEFAULT_JERSEY_SIZE = Vector3.new(2.31, 5.4, 2.3)
-local originalJerseySizes = {}
-local enhancedOverlays = {}
-
-local function destroyOverlay(plr)
-    local ov = enhancedOverlays[plr]
-    if ov then
-        pcall(function() ov:Destroy() end)
-        enhancedOverlays[plr] = nil
-    end
-end
-
-local function clearAllOverlays()
-    for plr, ov in pairs(enhancedOverlays) do
-        pcall(function()
-            if ov then ov:Destroy() end
-        end)
-    end
-    table.clear(enhancedOverlays)
-end
-
-local function restoreJerseys()
-    for jersey, data in pairs(originalJerseySizes) do
-        pcall(function()
-            if jersey and jersey.Parent then
-                if type(data) == 'table' then
-                    jersey.Size = data.Size or DEFAULT_JERSEY_SIZE
-                    if data.CanCollide ~= nil then jersey.CanCollide = data.CanCollide end
-                    if data.Massless ~= nil then jersey.Massless = data.Massless end
-                else
-                    jersey.Size = data or DEFAULT_JERSEY_SIZE
-                end
-            end
-        end)
-    end
-    table.clear(originalJerseySizes)
-end
-
-OLDLTab:CreateToggle({
-    Name = 'Advanced Blocking',
-    Default = false,
-    Tip = 'Block enhancer on other players (skips ball carriers)',
-    Callback = function(v)
-        advancedBlockingEnabled = v
-        if not v then
-            clearAllOverlays()
-            restoreJerseys()
-        end
-    end
-})
-
-OLDLTab:CreateSlider({
-    Name = 'Enhanced Block Size',
-    Min = 5,
-    Max = 25,
-    Default = 10,
-    Increment = 0.5,
-    Suffix = ' studs',
-    Tip = 'Size of the block hitbox',
-    Callback = function(v)
-        enhancedBlockSize = v
-        for _, ov in pairs(enhancedOverlays) do
-            if ov and ov.Parent then
-                pcall(function()
-                    ov.Size = Vector3.new(v, v, v)
-                end)
-            end
-        end
-    end
-})
 
 -- ====================== HITBOX LOGIC ======================
 local currentTarget = nil
 local touchPart = nil
-local modifiedParts = {}          -- track every part we ever touched
+local modifiedParts = {}
 
 local function isFootballPart(part)
     if not part then return false end
@@ -3108,7 +3033,6 @@ local function applyHitbox(char)
         end
     end
 
-    -- only fire touch when we are actually close enough
     local myChar = LocalPlayer.Character
     if myChar and myChar:FindFirstChild("HumanoidRootPart") then
         local myRoot = myChar.HumanoidRootPart
@@ -3131,7 +3055,6 @@ local function applyHitbox(char)
     end
 end
 
--- cleanup on leave / death
 Players.PlayerRemoving:Connect(function(p)
     if p == currentTarget then restoreAll() end
 end)
@@ -3150,14 +3073,13 @@ RunService.Heartbeat:Connect(function()
 
     local carrier = getBallCarrier()
 
-    -- carrier disappeared or changed
     if not carrier then
         if currentTarget then restoreAll() end
         return
     end
 
     if carrier ~= currentTarget then
-        restoreAll()                       -- fully clean previous target
+        restoreAll()
         currentTarget = carrier
     end
 
@@ -3283,14 +3205,7 @@ task.spawn(function()
     end
 end)
 
-
-
 -- ====================== ENHANCED BLOCKING LOGIC ======================
--- Jersey size = block (works from outside).
--- While YOU are inside their hitbox, pulse size slightly so block
--- keeps re-triggering — no solid local parts, no firetouchinterest (no TP).
--- Team check + skip Football.
-
 local StatsService = game:GetService('Stats')
 local pulsePhase = 0
 
@@ -3382,7 +3297,6 @@ local function expandJersey(char, inside)
     end
 
     local s = enhancedBlockSize
-    -- While inside, pulse size so block keeps registering (edge re-contact)
     if inside then
         if pulsePhase == 0 then
             s = s * 0.92
@@ -3397,7 +3311,7 @@ end
 local function applyEnhancedBlocking()
     if not advancedBlockingEnabled then return end
 
-    pulsePhase = (pulsePhase + 1) % 4 -- pulse every few frames while inside
+    pulsePhase = (pulsePhase + 1) % 4
 
     local s = enhancedBlockSize
     local targetSize = Vector3.new(s, s, s)
@@ -3481,3 +3395,4 @@ RunService.RenderStepped:Connect(function()
         applyEnhancedBlocking()
     end
 end)
+
