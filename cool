@@ -2685,12 +2685,6 @@ WRDBTab:CreateSlider({
 
 WRDBTab:CreateDivider()
 
--- Auto Tuck
-WRDBTab:CreateToggle({
-    Name = 'Auto Tuck',
-    Default = false,
-    Callback = function(v) autoTuckEnabled = v end
-})
 
 -- ====================== JUMP POWER ======================
 task.spawn(function()
@@ -2785,17 +2779,39 @@ end)
 
 UserInputService.TouchTap:Connect(doMag)
 
--- ====================== AUTO TUCK ======================
--- Was double-tucking because: Tuck value + FireServer + E all fired together
--- (E/remote toggle = tuck then untuck), and ChildAdded + poll both triggered.
--- Fix: ONE action only, poll-only, skip if already tucked.
+-- ====================== AUTO TUCK (fixed - once only) ======================
+local autoTuckEnabled = false
 local tuckedThisBall = false
+local lastTuckTime = 0
+local TUCK_COOLDOWN = 1.2   -- seconds - prevents any re-trigger
+
+WRDBTab:CreateToggle({
+    Name = 'Auto Tuck',
+    Default = false,
+    Callback = function(v)
+        autoTuckEnabled = v
+        if not v then
+            tuckedThisBall = false
+        end
+    end
+})
 
 local function isAlreadyTucked(char)
-    local j = char and char:FindFirstChild('Jersey')
+    if not char then return false end
+
+    -- Primary check
+    local j = char:FindFirstChild('Jersey')
     local vals = j and j:FindFirstChild('Values')
     local tuck = vals and vals:FindFirstChild('Tuck')
-    return tuck and tuck:IsA('BoolValue') and tuck.Value == true
+    if tuck and tuck:IsA('BoolValue') and tuck.Value == true then
+        return true
+    end
+
+    -- Extra safety checks some games use
+    if char:GetAttribute('Tucked') == true then return true end
+    if char:FindFirstChild('Tucked') and char.Tucked.Value == true then return true end
+
+    return false
 end
 
 local function doTuck()
@@ -2806,44 +2822,53 @@ local function doTuck()
         return
     end
 
+    -- Strict once-only: prefer BoolValue, never combine methods
     local j = char:FindFirstChild('Jersey')
     local vals = j and j:FindFirstChild('Values')
     local tuck = vals and vals:FindFirstChild('Tuck')
 
-    -- Prefer BoolValue only — do NOT also FireServer or press E (those toggle)
     if tuck and tuck:IsA('BoolValue') then
         tuck.Value = true
         tuckedThisBall = true
+        lastTuckTime = tick()
         return
     end
 
+    -- Only fire remote if no BoolValue existed
     local ev = j and j:FindFirstChild('Event')
     if ev and ev:IsA('RemoteEvent') then
         pcall(function()
             ev:FireServer({'Tuck'})
         end)
         tuckedThisBall = true
+        lastTuckTime = tick()
         return
     end
 
-    -- last resort: single E press
+    -- Absolute last resort - single E
     pcall(function()
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-        task.wait(0.04)
+        task.wait(0.03)
         VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
     end)
     tuckedThisBall = true
+    lastTuckTime = tick()
 end
 
 local function hasFootballEquipped()
     local char = player.Character
     if not char then return false end
-    local tool = char:FindFirstChild('Football')
-    if tool and tool:IsA('Tool') then return true end
+
+    if char:FindFirstChild('Football') and char.Football:IsA('Tool') then
+        return true
+    end
+
     for _, item in ipairs(char:GetChildren()) do
         if item:IsA('Tool') then
             local n = item.Name:lower()
-            if n == 'football' or n == 'handle' then return true end
+            if n == 'football' or n == 'handle' or n:find('ball') then
+                return true
+            end
         end
     end
     return false
@@ -2851,14 +2876,19 @@ end
 
 task.spawn(function()
     while true do
-        task.wait(0.1)
+        task.wait(0.12)
         if not autoTuckEnabled then
             tuckedThisBall = false
             continue
         end
+
         if hasFootballEquipped() then
-            if not tuckedThisBall then
-                doTuck()
+            if not tuckedThisBall and (tick() - lastTuckTime > TUCK_COOLDOWN) then
+                if not isAlreadyTucked(player.Character) then
+                    doTuck()
+                else
+                    tuckedThisBall = true
+                end
             end
         else
             tuckedThisBall = false
