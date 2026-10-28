@@ -2731,8 +2731,7 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- ====================== MAGNETS ======================
--- ====================== MAGNETS (more blatant) ======================
+-- ====================== MAGNETS (stronger + more consistent) ======================
 local function doMag()
     if not magnetsEnabled then return end
 
@@ -2741,10 +2740,10 @@ local function doMag()
     local root = char:FindFirstChild('HumanoidRootPart')
     if not root then return end
 
-    local closest, closestDist = nil, magEspSize
+    local closest, closestDist = nil, magEspSize + 2 -- a little extra room
 
     for _, handle in pairs(workspace:GetChildren()) do
-        if handle.Name == 'Handle' and handle:IsA('BasePart') then
+        if (handle.Name == 'Handle' or handle.Name == 'Football') and handle:IsA('BasePart') then
             local dist = (handle.Position - root.Position).Magnitude
             if dist <= closestDist then
                 closest = handle
@@ -2755,15 +2754,20 @@ local function doMag()
 
     if not closest then return end
 
-    -- Slight pull toward player (more blatant)
+    -- Strong force toward you
     pcall(function()
         local direction = (root.Position - closest.Position).Unit
-        closest.CFrame = closest.CFrame + direction * math.min(2.5, closestDist * 0.35)
+        closest.CFrame = closest.CFrame + direction * math.min(7, closestDist * 0.8)
     end)
 
-    -- Spam touchinterest harder
+    -- Force it right in front of you
     pcall(function()
-        for i = 1, 4 do
+        closest.CFrame = root.CFrame * CFrame.new(0, 0.3, -1.4)
+    end)
+
+    -- Heavy touch spam
+    pcall(function()
+        for i = 1, 12 do
             firetouchinterest(root, closest, 0)
             firetouchinterest(root, closest, 1)
         end
@@ -2778,7 +2782,6 @@ UserInputService.InputBegan:Connect(function(input, gpe)
 end)
 
 UserInputService.TouchTap:Connect(doMag)
-
 -- ====================== AUTO TUCK (fixed - once only) ======================
 local autoTuckEnabled = false
 local tuckedThisBall = false
@@ -3425,4 +3428,3 @@ RunService.RenderStepped:Connect(function()
         applyEnhancedBlocking()
     end
 end)
-
